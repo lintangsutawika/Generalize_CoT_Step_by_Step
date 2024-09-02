@@ -318,9 +318,6 @@ def main():
                 print ('skipped')
                 continue
            
-            print(input_ids.shape)
-            print(input_ids)
-            import sys; sys.exit()
             with ctx:
                 if args.keep_position:
                     position_ids = position_ids[:, :input_ids.shape[-1]]
