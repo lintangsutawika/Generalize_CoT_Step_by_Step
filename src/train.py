@@ -340,7 +340,7 @@ def main():
         if accuracy > best_val_accuracy:
             print ('***best so far or removed more CoT tokens***')
             best_val_accuracy = accuracy
-            if args.test_path:
+            if args.test_split:
                 accuracy, token_accuracy, ppl = evaluate(test_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
                 print (f'Test. PPL: {ppl}; Accuracy: {accuracy}; Token Accuracy: {token_accuracy}.')
         model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}'))
