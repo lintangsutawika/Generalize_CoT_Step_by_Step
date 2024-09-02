@@ -7,8 +7,9 @@ This repository is based on code from the paper [From Explicit CoT to Implicit C
 To train the model, run the following commands. The example uses 9 X 9 Mult with GPT-2:
 
 ```
-export D=9
-export FOLDER=data/${D}_by_${D}_mult/
+export D=4
+export DATANAME=lintang/implicit-cot-math
+export DATAPATH=${D}_by_${D}_mult
 export MODEL=gpt2
 export EPOCHS=200
 export LR=5e-5
@@ -20,12 +21,12 @@ export REMOVAL_SMOOTHING_LAMBDA=4
 export REMOVAL_SIDE=left
 export PRETRAIN_EPOCHS=0
 export SEED=3456
-export SAVE=train_models/${D}_by_${D}_mult/gpt2
+export SAVE=/data/user_data/lsutawik/rpt/train_models/${D}_by_${D}_mult/gpt2
 mkdir -p $SAVE
 TOKENIZERS_PARALLELISM=false CUDA_VISIBLE_DEVICES=0 stdbuf -oL -eL python src/train.py \
     --model ${MODEL} \
-    --train_path ${FOLDER}/train.txt \
-    --val_path ${FOLDER}/valid.txt \
+    --data_path ${DATANAME} \
+    --data_name ${DATAPATH} \
     --epochs ${EPOCHS} \
     --lr ${LR} \
     --batch_size ${BSZ} \

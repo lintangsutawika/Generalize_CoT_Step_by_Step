@@ -4,7 +4,7 @@ import copy
 import torch
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-
+from tqdm import tqdm
 from datasets import load_dataset
 
 def extract_answer(text):
@@ -28,9 +28,9 @@ def extract_cot(text):
         return cot
 
 class CoTDataset(Dataset):
-    def __init__(self, tokenizer, data_path, data_name=None, max_length=-1, max_size=-1, split="train"):
-        assert os.path.isfile(file_path), f"Input file path {file_path} not found"
-        print (f'Creating features from dataset file at {file_path}')
+    def __init__(self, tokenizer, data_path, max_length=-1, max_size=-1, split="train", data_name=None):
+        # assert os.path.isfile(file_path), f"Input file path {file_path} not found"
+        # print (f'Creating features from dataset file at {file_path}')
         eos_tok = tokenizer.eos_token
         eos_tok = tokenizer.eos_token
 
@@ -54,7 +54,7 @@ class CoTDataset(Dataset):
         edited_sents_all = []
         #edited_sents_nocot = []
         self.examples_all = []
-        for src, tgt in zip(src_lines, tgt_lines):
+        for src, tgt in tqdm(zip(src_lines, tgt_lines), total=len(src_lines)):
             #import pdb; pdb.set_trace()
             ans = extract_answer(tgt)
             cot = extract_cot(tgt)
@@ -71,8 +71,8 @@ class CoTDataset(Dataset):
             else:
                 batch_encoding_all = tokenizer([sent], add_special_tokens=True)
             self.examples_all.append(batch_encoding_all["input_ids"][0])
-            if len(self.examples_all) % 1000 == 0:
-                print (len(self.examples_all))
+            # if len(self.examples_all) % 1000 == 0:
+            #     print (len(self.examples_all))
 
         separator = tokenizer.eos_token_id #tokenizer(eos_tok, add_special_tokens=False)['input_ids'][0]
         self.separator = separator

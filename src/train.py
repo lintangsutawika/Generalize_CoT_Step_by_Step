@@ -220,10 +220,10 @@ def main():
     collate_fn = CoTDataCollator(tokenizer)
     train_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, max_size=args.max_size, split=args.train_split)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=True)
-    val_dataset = CoTDataset(tokenizer, args.val_path, args.truncation, data_name=args.data_name, split=args.val_split)
+    val_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, split=args.val_split)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=False)
     if args.test_split:
-        test_dataset = CoTDataset(tokenizer, args.test_path, args.truncation, data_name=args.data_name, split=args.test_split)
+        test_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, split=args.test_split)
         test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=False)
 
     # Create Optimizer
@@ -318,6 +318,9 @@ def main():
                 print ('skipped')
                 continue
            
+            print(input_ids.shape)
+            print(input_ids)
+            import sys; sys.exit()
             with ctx:
                 if args.keep_position:
                     position_ids = position_ids[:, :input_ids.shape[-1]]
