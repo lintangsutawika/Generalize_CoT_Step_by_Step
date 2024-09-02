@@ -5,6 +5,8 @@ import torch
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 
+from datasets import load_dataset
+
 def extract_answer(text):
     split_pattern = '####'
     if split_pattern not in text:
@@ -26,23 +28,26 @@ def extract_cot(text):
         return cot
 
 class CoTDataset(Dataset):
-    def __init__(self, tokenizer, file_path, max_length=-1, max_size=-1):
+    def __init__(self, tokenizer, data_path, data_name=None, max_length=-1, max_size=-1, split="train"):
         assert os.path.isfile(file_path), f"Input file path {file_path} not found"
         print (f'Creating features from dataset file at {file_path}')
         eos_tok = tokenizer.eos_token
         eos_tok = tokenizer.eos_token
 
-        with open(file_path, encoding="utf-8") as f:
-            #lines = [line.split('||') for line in f.read().splitlines() if (len(line) > 0 and not line.isspace()
-            #                                                                 and len(line.split('||')) ==2 )]
-            lines = [line.strip().split('||') for line in f.readlines() if (len(line.strip()) > 0 and not line.strip().isspace()
-                                                                             and len(line.strip().split('||')) ==2 )]
-        if max_size > 0:
-            print (f'truncated to {max_size}')
-            lines = lines[:max_size]
-        src_lines, tgt_lines = list(zip(*lines))
-        src_lines = list(src_lines)
-        tgt_lines = list(tgt_lines)
+        # with open(file_path, encoding="utf-8") as f:
+        #     #lines = [line.split('||') for line in f.read().splitlines() if (len(line) > 0 and not line.isspace()
+        #     #                                                                 and len(line.split('||')) ==2 )]
+        #     lines = [line.strip().split('||') for line in f.readlines() if (len(line.strip()) > 0 and not line.strip().isspace()
+        #                                                                      and len(line.strip().split('||')) ==2 )]
+
+        dataset = load_dataset(path=data_path, name=data_name)[split]
+
+        # if max_size > 0:
+        #     print (f'truncated to {max_size}')
+        #     lines = lines[:max_size]
+        # src_lines, tgt_lines = list(zip(*lines))
+        src_lines = list(dataset["input"])
+        tgt_lines = list(dataset["output"])
 
         #edited_sents_cot = []
         #edited_sents_only = []
