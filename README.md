@@ -4,8 +4,6 @@ This repository is based on code from the paper [From Explicit CoT to Implicit C
 
 ### Training
 
-![](imgs/stepwise_internalization.png)
-
 To train the model, run the following commands. The example uses 9 X 9 Mult with GPT-2:
 
 ```
