@@ -130,9 +130,11 @@ def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, schedule
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='gpt2')
-    parser.add_argument('--train_path', type=str, required=True)
-    parser.add_argument('--val_path', type=str, required=True)
-    parser.add_argument('--test_path', type=str, default=None)
+    parser.add_argument('--data_path', type=str, required=True)
+    parser.add_argument('--data_name', type=str, default=None)
+    parser.add_argument('--train_split', type=str, default="train")
+    parser.add_argument('--val_split', type=str, default="valid")
+    parser.add_argument('--test_split', type=str, default=None)
     parser.add_argument('--epochs', type=int, default=1)
     parser.add_argument('--lr', type=float, default=5e-5)
     parser.add_argument('--batch_size', type=int, default=32)
@@ -216,12 +218,12 @@ def main():
 
     # Load data
     collate_fn = CoTDataCollator(tokenizer)
-    train_dataset = CoTDataset(tokenizer, args.train_path, args.truncation, max_size=args.max_size)
+    train_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, max_size=args.max_size, split=args.train_split)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=True)
-    val_dataset = CoTDataset(tokenizer, args.val_path, args.truncation)
+    val_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, split=args.val_split)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=False)
-    if args.test_path:
-        test_dataset = CoTDataset(tokenizer, args.test_path, args.truncation)
+    if args.test_split:
+        test_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, split=args.test_split)
         test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=False)
 
     # Create Optimizer
@@ -338,7 +340,7 @@ def main():
         if accuracy > best_val_accuracy:
             print ('***best so far or removed more CoT tokens***')
             best_val_accuracy = accuracy
-            if args.test_path:
+            if args.test_split:
                 accuracy, token_accuracy, ppl = evaluate(test_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
                 print (f'Test. PPL: {ppl}; Accuracy: {accuracy}; Token Accuracy: {token_accuracy}.')
         model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}'))
