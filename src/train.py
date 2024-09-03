@@ -8,6 +8,8 @@ import logging
 import random
 import torch
 
+import numpy as np
+
 from torch.utils.data import DataLoader
 from transformers import AdamW
 
@@ -147,6 +149,7 @@ def main():
     parser.add_argument('--removal_side', type=str, choices=['left', 'right'], default='left')
     parser.add_argument('--pretrain_epochs', type=int, default=0)
     parser.add_argument('--truncation', type=int, default=-1)
+    parser.add_argument('--min_cot_length', type=int, default=10)
     parser.add_argument('--max_len_train', type=int, default=-1)
     parser.add_argument('--max_new_tokens', type=int, default=800)
     parser.add_argument('--max_size', type=int, default=-1)
@@ -210,6 +213,11 @@ def main():
             )
     model = model.to(device).to(ptdtype)
     tokenizer = model.tokenizer
+    tokenizer.add_tokens(["<ready>", "<pause>"])
+    model.tokenizer = tokenizer
+
+    ready_id = tokenizer.encode("<ready>")[0]
+    pause_id = tokenizer.encode("<pause>")[0]
 
     if args.reinitialize_weights:
         print ('reinitializing weights')
@@ -236,14 +244,14 @@ def main():
 
     # Train
     step = 0
-    scheduled_to_perturb = None
-    if args.remove_tokens or args.switch_tokens:
-        scheduled_to_perturb = 0
+    # scheduled_to_perturb = None
+    # if args.remove_tokens or args.switch_tokens:
+    #     scheduled_to_perturb = 0
 
     scheduled_to_switch = 0
-    if args.switch_start_from > 0:
-        print (f'the number of switched CoT tokens starts from {args.switch_start_from}')
-        scheduled_to_switch = args.switch_start_from
+    # if args.switch_start_from > 0:
+    #     print (f'the number of switched CoT tokens starts from {args.switch_start_from}')
+    #     scheduled_to_switch = args.switch_start_from
 
     scheduled_to_remove = 0
     if args.remove_start_from > 0:
@@ -254,7 +262,9 @@ def main():
 
     steps_per_epoch = len(train_dataloader)
     steps_per_removed_token = int(round(steps_per_epoch / args.remove_per_epoch))
+    steps_per_switched_token = int(round(steps_per_epoch * args.epochs - steps_per_removed_token) / 100)
     remove_step_counter = 0
+    switch_step_counter = 0
     best_val_accuracy = float('-inf')
 
     all_cot_removed_in_prev_batch = False
@@ -283,6 +293,8 @@ def main():
                         optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, **extra_args)
                 if scheduled_to_remove >= args.remove_all_when_remove_beyond:
                     scheduled_to_remove = float('inf') # remove all
+                elif scheduled_to_remove >= args.min_cot_length:
+                    scheduled_to_remove = min_cot_length
                 input_ids = batch['input_ids_all'].to(device)
                 labels = batch['labels_all'].to(device)
                 batch_size = input_ids.shape[0]
@@ -327,6 +339,36 @@ def main():
                         best_val_accuracy = float('-inf')
                 #print (input_ids.shape)
                 all_cot_removed_in_prev_batch = all_cot_removed_in_batch
+
+            if args.switch_tokens and scheduled_to_remove > 0:
+                prev_scheduled_to_switch = scheduled_to_switch
+                if switch_step_counter == steps_per_switched_token or steps_per_switched_token == 0:
+                    scheduled_to_switch += 1
+                    switch_step_counter = 0
+                if epoch >= args.pretrain_epochs:
+                    switch_step_counter += 1
+
+                first_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id) + 1
+                second_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=1)
+                eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=2)
+                delta_sep_positions = second_sep_positions - first_sep_positions
+                
+                if scheduled_to_switch > 0:
+                    switch_prob = scheduled_to_switch/100.0
+
+                    for batch_id in range(input_ids.shape[0]):
+                        cot_length = int(delta_sep_positions[batch_id].cpu())
+                        filler_mask = np.random.choice([True, False], cot_length, p=[switch_prob, 1-switch_prob])
+                        filler_ids = np.array([ready_id]*(cot_length-1)+[pause_id])
+
+                        input_ids_tmp = input_ids[batch_id][first_sep_positions[batch_id]:second_sep_positions[batch_id]]
+                        input_ids_tmp[filler_mask] = torch.from_numpy(filler_ids[filler_mask]).to(device)
+                        input_ids[batch_id][first_sep_positions[batch_id]:second_sep_positions[batch_id]] = input_ids_tmp
+
+                        labels_tmp = labels[batch_id][first_sep_positions[batch_id]:second_sep_positions[batch_id]]
+                        labels_tmp[filler_mask] = torch.from_numpy(filler_ids[filler_mask]).to(device)
+                        labels[batch_id][first_sep_positions[batch_id]:second_sep_positions[batch_id]] = labels_tmp
+                
             if args.max_len_train > 0 and input_ids.shape[-1] > args.max_len_train:
                 print ('skipped')
                 continue
