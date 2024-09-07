@@ -48,6 +48,8 @@ class CoTDataset(Dataset):
         # src_lines, tgt_lines = list(zip(*lines))
         src_lines = list(dataset["input"])
         tgt_lines = list(dataset["output"])
+        # src_lines = list(dataset["question"])
+        # tgt_lines = list(dataset["answer"])
 
         #edited_sents_cot = []
         #edited_sents_only = []
