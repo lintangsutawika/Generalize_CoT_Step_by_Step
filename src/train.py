@@ -259,12 +259,12 @@ def main():
     best_val_accuracy = float('-inf')
 
     scheduled_to_switch = 0
-    if args.switch_start_from > 0:
+    if args.switch_tokens > 0:
         print (f'the number of switched CoT tokens starts from {args.switch_start_from}')
         scheduled_to_switch = args.switch_start_from
 
     scheduled_to_remove = 0
-    if args.remove_start_from > 0:
+    if args.remove_tokens > 0:
         print (f'the number of removed CoT tokens starts from {args.remove_start_from}')
         scheduled_to_remove = args.remove_start_from
 
@@ -275,12 +275,11 @@ def main():
             scheduled_to_remove = int(round(scheduled_to_remove))
         if scheduled_to_remove >= args.remove_all_when_remove_beyond:
             scheduled_to_remove = float('inf') # remove all
-        print(f"Epoch {epoch}. Scheduled to remove: {scheduled_to_remove}")
         model.train()
         for batch in tqdm.tqdm(train_dataloader):
 
-            input_ids = batch['input_ids_all'].to(device)
-            labels = batch['labels_all'].to(device)
+            input_ids = batch['input_ids_all'] #.to(device)
+            labels = batch['labels_all'] #.to(device)
             batch_size = input_ids.shape[0]
             if args.remove_tokens:
                 prev_scheduled_to_remove = scheduled_to_remove
@@ -309,7 +308,7 @@ def main():
                 if scheduled_to_remove > 0 or args.removal_smoothing_lambda != float('inf'):
                     input_ids_tmp = []
                     labels_tmp = []
-                    random_removal_offset = torch.multinomial(lambda_distribution, batch_size, replacement=True).to(device)
+                    random_removal_offset = torch.multinomial(lambda_distribution, batch_size, replacement=True) #.to(device)
                     to_remove = scheduled_to_remove + random_removal_offset
                     if epoch < args.pretrain_epochs:
                         to_remove.fill_(args.remove_start_from)
@@ -342,9 +341,6 @@ def main():
 
                 all_cot_removed_in_prev_batch = all_cot_removed_in_batch
 
-            print("epoch >= scheduled_to_switch", epoch >= scheduled_to_switch)
-            print("epoch", epoch)
-            print("scheduled_to_switch", scheduled_to_switch)
             if epoch >= scheduled_to_switch and args.switch_tokens:
                 if switch_step_counter == steps_per_switched_token or steps_per_switched_token == 0:
                     print(f" -epoch {epoch}. step {step}. switching rate: {switch_ratio}%")
@@ -383,16 +379,16 @@ def main():
                         switch_index = np.column_stack((start_indices, end_indices))
                         cot_tokens = input_ids[batch_id][first_sep_positions[batch_id]:second_sep_positions[batch_id]]
                         cot_tokens_tmp = []
-                        for start, end in switch_index:
-                            cot_tokens_tmp.append(cot_tokens[:start])
+                        for idx, (start, end) in enumerate(switch_index):
+                            if (idx == 0) and (start > 0):
+                                cot_tokens_tmp.append(cot_tokens[:start])
                             seq_leng = end - start
                             num_tokens = int(np.ceil(seq_leng/args.switch_token_replace))
-                            cot_tokens_tmp.append(torch.as_tensor([pause_id]*num_tokens).to(device))
+                            cot_tokens_tmp.append(torch.as_tensor([pause_id]*num_tokens)) #.to(device)
 
                         if end < cot_length:
                             cot_tokens_tmp.append(cot_tokens[end:])
                         
-                        # cot_tokens_tmp = input_ids[batch_id][:first_sep_positions[batch_id]] + cot_tokens_tmp + input_ids[batch_id][second_sep_positions[batch_id]:]
                         cot_tokens_tmp = torch.cat(cot_tokens_tmp)
                         if cot_tokens_tmp[-1] == pause_id:
                             cot_tokens_tmp[-1] = ready_id
@@ -412,10 +408,18 @@ def main():
                                 labels[batch_id][second_sep_positions[batch_id]:]
                                 ), dim=-1)
                             )
+                        
+                        del cot_tokens_tmp
 
                     input_ids = batch_ids(input_ids_tmp, tokenizer.eos_token_id, device, input_ids.dtype)
                     labels = batch_ids(labels_tmp, -100, device, input_ids.dtype)
 
+                    del input_ids_tmp, labels_tmp
+
+            if (not args.switch_tokens) and (not args.remove_tokens):
+                input_ids = input_ids.to(device)
+                labels = labels.to(device)
+            
             if not_printed == False:
                 print("Sample Input")
                 print(input_ids[0])
