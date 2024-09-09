@@ -7,6 +7,7 @@ import inspect
 import logging
 import random
 import torch
+import json
 
 import numpy as np
 
@@ -175,7 +176,8 @@ def main():
         args.remove_all_when_remove_beyond = float('inf')
     else:
         args.remove_all_when_remove_beyond = int(args.remove_all_when_remove_beyond)
-    print (args)
+    with open(os.path.join(args.save_model, "train_args.json"), 'wt') as f:
+        json.dump(vars(args), f, indent=4)
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     lambda_distribution = compute_lambda_distribution(args.removal_smoothing_lambda)
@@ -386,8 +388,8 @@ def main():
                             num_tokens = int(np.ceil(seq_leng/args.switch_token_replace))
                             cot_tokens_tmp.append(torch.as_tensor([pause_id]*num_tokens)) #.to(device)
 
-                        if end < cot_length:
-                            cot_tokens_tmp.append(cot_tokens[end:])
+                            if (idx == len(switch_index)-1) and (end < cot_length):
+                                cot_tokens_tmp.append(cot_tokens[end:])
                         
                         cot_tokens_tmp = torch.cat(cot_tokens_tmp)
                         if cot_tokens_tmp[-1] == pause_id:
@@ -416,9 +418,9 @@ def main():
 
                     del input_ids_tmp, labels_tmp
 
-            if (not args.switch_tokens) and (not args.remove_tokens):
-                input_ids = input_ids.to(device)
-                labels = labels.to(device)
+            # if (not args.switch_tokens) and (not args.remove_tokens):
+            input_ids = input_ids.to(device)
+            labels = labels.to(device)
             
             if not_printed == False:
                 print("Sample Input")
