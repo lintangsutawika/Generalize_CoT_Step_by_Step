@@ -345,9 +345,12 @@ def main():
 
             if epoch >= scheduled_to_switch and args.switch_tokens:
                 if switch_step_counter == steps_per_switched_token or steps_per_switched_token == 0:
+                    model.base_model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}_step_{step}_switch_rate_{switch_ratio}'), from_pt=True)
                     print(f" -epoch {epoch}. step {step}. switching rate: {switch_ratio}%")
                     switch_ratio += 1.0
                     switch_step_counter = 0
+                else:
+                    switch_step_counter += 1
 
                 first_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id) + 1
                 second_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=1)
@@ -365,7 +368,11 @@ def main():
                     for batch_id in range(input_ids.shape[0]):
                         cot_length = int(delta_sep_positions[batch_id].cpu())
                         filler_mask = np.random.choice([True, False], cot_length, p=[switch_prob, 1-switch_prob])
-                        filler_ids = np.array([pause_id]*(cot_length-1)+[ready_id])
+
+                        if sum(filler_mask) == 0:
+                            input_ids_tmp.append(input_ids[batch_id])
+                            labels_tmp.append(labels[batch_id])
+                            continue
 
                         # Find indices where the value changes from False to True
                         start_indices = np.where(np.diff(filler_mask.astype(int)) == 1)[0] + 1
@@ -458,7 +465,7 @@ def main():
             if args.test_split:
                 accuracy, token_accuracy, ppl = evaluate(test_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
                 print (f'Test. PPL: {ppl}; Accuracy: {accuracy}; Token Accuracy: {token_accuracy}.')
-        model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}'))
+        model.base_model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}'), from_pt=True)
 
 if __name__ == "__main__":
     main()
