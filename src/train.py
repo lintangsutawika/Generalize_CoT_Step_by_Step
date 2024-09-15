@@ -39,7 +39,7 @@ def compute_lambda_distribution(removal_smoothing_lambda, truncate_length=100):
 
     
 @torch.no_grad()
-def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, scheduled_to_remove, removal_side, removal_smoothing_lambda, lambda_distribution, keep_position=False, disable_random_removal_offset=False):
+def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, scheduled_to_remove, removal_side, removal_smoothing_lambda, lambda_distribution, keep_position=False, disable_random_removal_offset=False, ready_token="<|ready|>"):
     model.eval()
     total_instances = 0
     total_tokens = 0
@@ -48,6 +48,7 @@ def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, schedule
     total_loss = 0
     position_ids_all = None
     position_ids = None
+    ready_id = tokenizer.encode(ready_token)[0]
     for batch in tqdm.tqdm(dataloader):
         input_ids_all = batch['input_ids_all'].to(device)
         labels = batch['labels_all'].to(device)
@@ -56,8 +57,10 @@ def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, schedule
         input_ids = input_ids_all[:, :sep_positions.max()+1]
         batch_size = input_ids.shape[0]
         first_sep_positions = get_sep_position(input_ids_all, tokenizer.eos_token_id)
-        second_sep_positions = get_sep_position(input_ids_all, tokenizer.eos_token_id, skip=1)
-        eos_positions = get_sep_position(input_ids_all, tokenizer.eos_token_id, skip=2)
+        # second_sep_positions = get_sep_position(input_ids_all, tokenizer.eos_token_id, skip=1)
+        second_sep_positions = get_sep_position(input_ids_all, ready_id)
+        # eos_positions = get_sep_position(input_ids_all, tokenizer.eos_token_id, skip=2)
+        eos_positions = get_sep_position(input_ids_all, tokenizer.eos_token_id, skip=1)
 
         if scheduled_to_remove > 0 or removal_smoothing_lambda != float('inf'):
             if keep_position:
@@ -218,12 +221,12 @@ def main():
             )
     model = model.to(device).to(ptdtype)
     tokenizer = model.tokenizer
-    tokenizer.add_tokens(["<pause>", "<ready>"])
+    tokenizer.add_tokens(["<|pause|>", "<|ready|>"])
     model.tokenizer = tokenizer
     model.base_model.resize_token_embeddings(len(tokenizer)) 
 
-    ready_id = tokenizer.encode("<ready>")[0]
-    pause_id = tokenizer.encode("<pause>")[0]
+    ready_id = tokenizer.encode("<|ready|>")[0]
+    pause_id = tokenizer.encode("<|pause|>")[0]
 
     if args.reinitialize_weights:
         print ('reinitializing weights')
@@ -302,9 +305,12 @@ def main():
                 elif scheduled_to_remove >= args.max_remove_length:
                     scheduled_to_remove = args.max_remove_length
 
-                first_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
-                second_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=1)
-                eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=2)
+                # first_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
+                first_sep_positions = get_sep_position(input_ids, start_id)
+                # second_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=1)
+                second_sep_positions = get_sep_position(input_ids, ready_id)
+                # eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=2)
+                eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
 
                 all_cot_removed_in_batch = False
                 if scheduled_to_remove > 0 or args.removal_smoothing_lambda != float('inf'):
@@ -346,15 +352,19 @@ def main():
             if epoch >= scheduled_to_switch and args.switch_tokens:
                 if switch_step_counter == steps_per_switched_token or steps_per_switched_token == 0:
                     model.base_model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}_step_{step}_switch_rate_{switch_ratio}'), from_pt=True)
+                    model.tokenizer.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}_step_{step}_switch_rate_{switch_ratio}'))
                     print(f" -epoch {epoch}. step {step}. switching rate: {switch_ratio}%")
                     switch_ratio += 1.0
                     switch_step_counter = 0
                 else:
                     switch_step_counter += 1
 
-                first_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id) + 1
-                second_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=1)
-                eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=2)
+                # first_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
+                first_sep_positions = get_sep_position(input_ids, start_id)
+                # second_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=1)
+                second_sep_positions = get_sep_position(input_ids, ready_id)
+                # eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=2)
+                eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
                 delta_sep_positions = second_sep_positions - first_sep_positions
                 
                 if switch_ratio > 0:
@@ -399,8 +409,8 @@ def main():
                                 cot_tokens_tmp.append(cot_tokens[end:])
                         
                         cot_tokens_tmp = torch.cat(cot_tokens_tmp)
-                        if cot_tokens_tmp[-1] == pause_id:
-                            cot_tokens_tmp[-1] = ready_id
+                        # if cot_tokens_tmp[-1] == pause_id:
+                        #     cot_tokens_tmp[-1] = ready_id
 
                         input_ids_tmp.append(
                             torch.cat((
@@ -466,6 +476,7 @@ def main():
                 accuracy, token_accuracy, ppl = evaluate(test_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
                 print (f'Test. PPL: {ppl}; Accuracy: {accuracy}; Token Accuracy: {token_accuracy}.')
         model.base_model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}'), from_pt=True)
+        model.tokenizer.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}'))
 
 if __name__ == "__main__":
     main()
