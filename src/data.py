@@ -28,11 +28,12 @@ def extract_cot(text):
         return cot
 
 class CoTDataset(Dataset):
-    def __init__(self, tokenizer, data_path, max_length=-1, max_size=-1, split="train", data_name=None):
+    def __init__(self, tokenizer, data_path, max_length=-1, max_size=-1, split="train", data_name=None, ready_token="<|ready|>", start_token="<|start|>"):
         # assert os.path.isfile(file_path), f"Input file path {file_path} not found"
         # print (f'Creating features from dataset file at {file_path}')
         eos_tok = tokenizer.eos_token
-        eos_tok = tokenizer.eos_token
+        ready_tok = ready_token
+        start_tok = start_token
 
         # with open(file_path, encoding="utf-8") as f:
         #     #lines = [line.split('||') for line in f.read().splitlines() if (len(line) > 0 and not line.isspace()
@@ -48,6 +49,8 @@ class CoTDataset(Dataset):
         # src_lines, tgt_lines = list(zip(*lines))
         src_lines = list(dataset["input"])
         tgt_lines = list(dataset["output"])
+        # src_lines = list(dataset["question"])
+        # tgt_lines = list(dataset["answer"])
 
         #edited_sents_cot = []
         #edited_sents_only = []
@@ -62,7 +65,8 @@ class CoTDataset(Dataset):
             #edited_sents_cot.append(sent)
             #sent = ' {} {} '.format(src, eos_tok)
             #edited_sents_only.append(sent)
-            sent = ' {} {} '.format(src, eos_tok) + cot + ' {} '.format(eos_tok) + ans + ' {}'.format(eos_tok)
+            # sent = ' {} {} '.format(src, eos_tok) + cot + ' {} '.format(eos_tok) + ans + ' {}'.format(eos_tok)
+            sent = f' {src} {start_tok} {cot} {ready_tok} {ans} {eos_tok}'
             #edited_sents_all.append(sent)
             #sent = ' {} {} '.format(src, eos_tok) + ans + ' {}'.format(eos_tok)
             #edited_sents_nocot.append(sent)
