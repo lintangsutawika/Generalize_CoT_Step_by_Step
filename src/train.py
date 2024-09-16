@@ -310,7 +310,7 @@ def main():
     print(f'Training for {args.train_steps} steps ({max_epochs} epochs)', flush=True)
 
     all_cot_removed_in_prev_batch = False
-    for epoch in range(0, max_epochs):
+    for epoch in range(0, int(np.ceil(max_epochs))):
 
         model.train()
         for batch in train_dataloader:
@@ -488,12 +488,12 @@ def main():
                 ppl = loss.exp().item()
                 print(f"Step: {step}. PPL: {ppl}. Token Accuracy: {token_accuracy}", flush=True)
 
-            if step != 0 and step % save_interval == 0:
+            if (step != 0 and step % save_interval == 0) or step == args.train_steps:
                 #Save here
                 model.base_model.save_pretrained(os.path.join(args.save_model, f'step_{step}'), from_pt=True)
                 model.tokenizer.save_pretrained(os.path.join(args.save_model, f'step_{step}'))
 
-            if step != 0 and step % args.eval_interval == 0:
+            if (step != 0 and step % args.eval_interval == 0)  or step == args.train_steps:
                 accuracy = evaluate(val_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
                 print (f'Step {step} - Evalation on Valid Split; Accuracy: {accuracy}.', flush=True)
                 if accuracy > best_val_accuracy:
@@ -503,6 +503,9 @@ def main():
                         accuracy = evaluate(test_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
                         print(f'Step {step} - Evalation on Test Split; Accuracy: {accuracy}.', flush=True)
 
+            if step == args.train_steps:
+                print(f"Training for {args.train_steps} completed.")
+                sys.exit()
             step += 1
 
 if __name__ == "__main__":
