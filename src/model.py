@@ -49,8 +49,11 @@ class ImplicitModel(nn.Module):
         outputs.total_tokens = total_tokens
         return outputs
 
-    def generate(self, input_ids, max_new_tokens=512, num_beams=1, stop_on_two_eos=True, position_ids=None):
+    def generate(self, input_ids, max_new_tokens=512, num_beams=1, stop_on_two_eos=False, position_ids=None):
         sep_positions = get_sep_position(input_ids, self.tokenizer.eos_token_id)
+        # start_tok = "<|start|>"
+        # separator = tokenizer(start_tok, add_special_tokens=False)['input_ids'][0]
+        # sep_positions = get_sep_position(input_ids_all, separator) #tokenizer.eos_token_id)
         batch_size = input_ids.shape[0]
 
         # Since there's one eos after CoT and another after final answer, we need to wait for two eos
@@ -132,14 +135,19 @@ class ImplicitModel(nn.Module):
 
     @classmethod
     def from_pretrained(self, pretrained_path):
-        config = ImplicitModelConfig.from_pretrained(pretrained_path)
+        # config = ImplicitModelConfig.from_pretrained(pretrained_path)
         model = ImplicitModel(config)
-        state_dict = torch.load(os.path.join(pretrained_path, 'state_dict.bin'))
-        model.load_state_dict(state_dict, strict=True)
+        # state_dict = torch.load(os.path.join(pretrained_path, 'state_dict.bin'))
+        # model.load_state_dict(state_dict, strict=True)
+        model.base_model.from_pretrained(pretrained_path)
+
         return model
 
     def save_pretrained(self, save_directory):
         print (f'Saving to {save_directory}')
-        self.config.save_pretrained(save_directory)
-        state_dict = self.state_dict()
-        torch.save(state_dict, os.path.join(save_directory, 'state_dict.bin'))
+        # self.config.save_pretrained(save_directory)
+        # state_dict = self.state_dict()
+        # torch.save(state_dict, os.path.join(save_directory, 'state_dict.bin'))
+
+        self.base_model.save_pretrained(save_directory, from_pt=True)
+        self.tokenizer.save_pretrained(save_directory)
