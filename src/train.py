@@ -49,11 +49,15 @@ def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, schedule
     position_ids_all = None
     position_ids = None
     ready_id = tokenizer.encode(ready_token)[0]
-    for batch in tqdm.tqdm(dataloader):
+    # for batch in tqdm.tqdm(dataloader):
+    for batch in dataloader:
         input_ids_all = batch['input_ids_all'].to(device)
         labels = batch['labels_all'].to(device)
         # Remove answer part
         sep_positions = get_sep_position(input_ids_all, tokenizer.eos_token_id)
+        # start_tok = "<|start|>"
+        # separator = tokenizer(start_tok, add_special_tokens=False)['input_ids'][0]
+        # sep_positions = get_sep_position(input_ids_all, separator) #tokenizer.eos_token_id)
         input_ids = input_ids_all[:, :sep_positions.max()+1]
         batch_size = input_ids.shape[0]
 
@@ -123,10 +127,12 @@ def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, schedule
             pred_ans = extract_answer(pred_text)
             if ans == pred_ans:
                 total_correct += 1
-            print (f'Input: {tokenizer.decode(input_ids_all_i[:sep_position], skip_special_tokens=True)}')
-            print (f'Target: {tgt_text}')
-            print (f'Predicted: {pred_text}')
-            print ('')
+
+            if i == 0:
+                print (f'Input: {tokenizer.decode(input_ids_all_i[:sep_position], skip_special_tokens=True)}')
+                print (f'Target: {tgt_text}')
+                print (f'Predicted: {pred_text}')
+                print ('')
     accuracy = total_correct / total_instances
     # token_accuracy = total_correct_tokens / total_tokens
     # loss = total_loss / total_tokens
@@ -144,24 +150,13 @@ def main():
     parser.add_argument('--test_split', type=str, default=None)
     parser.add_argument('--epochs', type=int, default=1)
     parser.add_argument('--train_steps', type=int, default=1000)
-    parser.add_argument('--eval_interval', type=int, default=1000)
     parser.add_argument('--lr', type=float, default=5e-5)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--accumulate', type=int, default=1)
-    parser.add_argument('--switch_tokens', action='store_true')
-    parser.add_argument('--remove_tokens', action='store_true')
-    parser.add_argument('--remove_per_epoch', type=float, default=8)
-    parser.add_argument('--switch_start_from', type=float, default=1)
-    parser.add_argument('--switch_token_replace', type=float, default=10)
-    parser.add_argument('--switch_ratio', type=float, default=10.0)
-    parser.add_argument('--remove_all_when_remove_beyond', type=str, default='inf')
-    parser.add_argument('--removal_smoothing_lambda', type=float, default=float('inf'))
-    parser.add_argument('--removal_side', type=str, choices=['left', 'right'], default='left')
-    parser.add_argument('--pretrain_epochs', type=int, default=0)
     parser.add_argument('--truncation', type=int, default=-1)
     parser.add_argument('--max_remove_length', type=int, default=20)
     parser.add_argument('--max_len_train', type=int, default=-1)
-    parser.add_argument('--max_new_tokens', type=int, default=800)
+    parser.add_argument('--max_new_tokens', type=int, default=1024)
     parser.add_argument('--max_size', type=int, default=-1)
     parser.add_argument('--save_model', type=str, required=True)
     parser.add_argument('--from_pretrained', type=str, default=None)
@@ -178,7 +173,26 @@ def main():
     parser.set_defaults(keep_position=False)
     parser.add_argument('--reinitialize_weights', action='store_true')
     parser.set_defaults(reinitialize_weights=False)
+    # Remove Tokens
+    parser.add_argument('--remove_tokens', action='store_true')
+    parser.add_argument('--remove_from_step', type=float, default=5000)
+    parser.add_argument('--remove_every_n_step', type=float, default=5000)
+    parser.add_argument('--remove_all_when_remove_beyond', type=str, default='inf')
+    parser.add_argument('--removal_smoothing_lambda', type=float, default=float('inf'))
+    parser.add_argument('--removal_side', type=str, choices=['left', 'right'], default='left')
+    # Switch Tokens
+    parser.add_argument('--switch_tokens', action='store_true')
+    parser.add_argument('--switch_from_step', type=float, default=5000)
+    parser.add_argument('--switch_every_n_step', type=float, default=5000)
+    parser.add_argument('--switch_token_ratio', type=float, default=1.0)
+    parser.add_argument('--switch_from_rate', type=float, default=0.1)
+    parser.add_argument('--switch_mode', type=str, choices=['depth', 'sequential'], default='sequential')
     args = parser.parse_args()
+
+    if args.save_interval is None:
+        save_interval = args.eval_interval
+    else:
+        save_interval = args.save_interval
 
     if args.remove_all_when_remove_beyond == 'inf':
         args.remove_all_when_remove_beyond = float('inf')
@@ -243,11 +257,14 @@ def main():
 
     # Load data
     collate_fn = CoTDataCollator(tokenizer)
+    print("Building training dataset loader")
     train_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, max_size=args.max_size, split=args.train_split)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=True)
+    print("Building validation dataset loader")
     val_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, split=args.val_split)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=False)
     if args.test_split:
+        print("Building test dataset loader")
         test_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, split=args.test_split)
         test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=False)
 
@@ -262,6 +279,7 @@ def main():
     position_ids = None
 
     steps_per_epoch = len(train_dataloader)
+    max_epochs = args.train_steps // steps_per_epoch
     steps_per_removed_token = int(round(steps_per_epoch / args.remove_per_epoch))
     steps_per_switched_token = int(round(steps_per_epoch * (args.epochs - args.switch_start_from)) / 100)
     remove_step_counter = 0
@@ -279,14 +297,16 @@ def main():
         print (f'the number of removed CoT tokens starts from {args.remove_start_from}')
         scheduled_to_remove = args.remove_start_from
 
+    print(f'Training for {args.train_steps} steps ({max_epochs} epochs)')
+
     all_cot_removed_in_prev_batch = False
-    for epoch in range(args.epochs or 0, max_epochs):
+    for epoch in range(0, max_epochs):
         if scheduled_to_remove < float('inf'):
             scheduled_to_remove = int(round(scheduled_to_remove))
         if scheduled_to_remove >= args.remove_all_when_remove_beyond:
             scheduled_to_remove = float('inf') # remove all
         model.train()
-        # for batch in tqdm.tqdm(train_dataloader):
+
         for batch in train_dataloader:
 
             input_ids = batch['input_ids_all'] #.to(device)
@@ -298,8 +318,6 @@ def main():
                 if remove_step_counter == steps_per_removed_token or steps_per_removed_token == 0:
                     scheduled_to_remove += 1
                     remove_step_counter = 0
-                if epoch >= args.pretrain_epochs:
-                    remove_step_counter += 1
                 if scheduled_to_remove > prev_scheduled_to_remove:
                     print (f'Scheduled to remove: {scheduled_to_remove}')
                     print(f" -epoch {epoch}. step {step}. removing: {scheduled_to_remove}")
@@ -313,11 +331,8 @@ def main():
                 elif scheduled_to_remove >= args.max_remove_length:
                     scheduled_to_remove = args.max_remove_length
 
-                # first_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
                 first_sep_positions = get_sep_position(input_ids, start_id)
-                # second_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=1)
                 second_sep_positions = get_sep_position(input_ids, ready_id)
-                # eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=2)
                 eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
 
                 all_cot_removed_in_batch = False
@@ -326,8 +341,6 @@ def main():
                     labels_tmp = []
                     random_removal_offset = torch.multinomial(lambda_distribution, batch_size, replacement=True) #.to(device)
                     to_remove = scheduled_to_remove + random_removal_offset
-                    if epoch < args.pretrain_epochs:
-                        to_remove.fill_(args.remove_start_from)
                     if args.keep_position:
                         position_ids = torch.arange(0, input_ids.shape[-1], dtype=torch.long, device=device).unsqueeze(0).repeat(batch_size, 1)
                     if args.removal_side == 'left':
@@ -448,11 +461,12 @@ def main():
             labels = labels.to(device)
             
             # if not_printed == False:
-            #     print("Sample Input")
-            #     print(input_ids[0])
-            #     print("Sample Label")
-            #     print(labels[0])
-            #     not_printed = True
+            if step == 0:
+                print("Sample Input")
+                print(input_ids[0])
+                print("Sample Label")
+                print(labels[0])
+                not_printed = True
                 
             if args.max_len_train > 0 and input_ids.shape[-1] > args.max_len_train:
                 print ('skipped')
@@ -469,17 +483,17 @@ def main():
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
-            if step % 100 == 0:
+            if step != 0 and step % 100 == 0:
                 token_accuracy = outputs.token_accuracy.item()
                 ppl = loss.exp().item()
                 print(f"Step: {step}. PPL: {ppl}. Token Accuracy: {token_accuracy}")
 
-            if step % args.save_interval == 0:
+            if step != 0 and step % save_interval == 0:
                 #Save here
                 model.base_model.save_pretrained(os.path.join(args.save_model, f'step_{step}'), from_pt=True)
                 model.tokenizer.save_pretrained(os.path.join(args.save_model, f'step_{step}'))
 
-            if step % args.eval_interval == 0:
+            if step != 0 and step % args.eval_interval == 0:
                 accuracy = evaluate(val_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
                 print (f'Step {step} - Evalation on Valid Split; Accuracy: {accuracy}.')
                 if accuracy > best_val_accuracy:
