@@ -175,14 +175,16 @@ def main():
     parser.set_defaults(reinitialize_weights=False)
     # Remove Tokens
     parser.add_argument('--remove_tokens', action='store_true')
-    parser.add_argument('--remove_from_step', type=float, default=5000)
+    parser.add_argument('--remove_from_n_steps', type=float, default=5000)
+    parser.add_argument('--remove_from_n_tokens', type=float, default=1)
     parser.add_argument('--remove_every_n_step', type=float, default=5000)
     parser.add_argument('--remove_all_when_remove_beyond', type=str, default='inf')
     parser.add_argument('--removal_smoothing_lambda', type=float, default=float('inf'))
     parser.add_argument('--removal_side', type=str, choices=['left', 'right'], default='left')
     # Switch Tokens
     parser.add_argument('--switch_tokens', action='store_true')
-    parser.add_argument('--switch_from_step', type=float, default=5000)
+    parser.add_argument('--switch_from_n_steps', type=float, default=5000)
+    parser.add_argument('--switch_from_n_tokens', type=float, default=1)
     parser.add_argument('--switch_every_n_step', type=float, default=5000)
     parser.add_argument('--switch_token_ratio', type=float, default=1.0)
     parser.add_argument('--switch_from_rate', type=float, default=0.1)
@@ -280,47 +282,48 @@ def main():
 
     steps_per_epoch = len(train_dataloader)
     max_epochs = args.train_steps // steps_per_epoch
-    steps_per_removed_token = int(round(steps_per_epoch / args.remove_per_epoch))
-    steps_per_switched_token = int(round(steps_per_epoch * (args.epochs - args.switch_start_from)) / 100)
+    steps_per_removed_token = int(args.remove_every_n_step)
+    steps_per_switched_token = int(args.switch_every_n_step)
     remove_step_counter = 0
-    switch_step_counter = steps_per_switched_token
-    switch_ratio = args.switch_ratio
+    switch_step_counter = 0
+    # switch_ratio = args.switch_ratio
     best_val_accuracy = float('-inf')
 
     scheduled_to_switch = 0
-    if args.switch_tokens > 0:
-        print (f'the number of switched CoT tokens starts from {args.switch_start_from}')
-        scheduled_to_switch = args.switch_start_from
+    if args.switch_tokens:
+        print (f'Switching {args.switch_from_n_tokens} CoT tokens starting from step {args.switch_from_n_steps}')
+        scheduled_to_switch = args.switch_from_n_tokens
 
     scheduled_to_remove = 0
-    if args.remove_tokens > 0:
-        print (f'the number of removed CoT tokens starts from {args.remove_start_from}')
-        scheduled_to_remove = args.remove_start_from
+    if args.remove_tokens:
+        print (f'Removing {args.remove_from_n_tokens} CoT tokens starting from step {args.remove_from_n_steps}')
+        scheduled_to_remove = args.remove_from_n_tokens
+
+        if scheduled_to_remove < float('inf'):
+            scheduled_to_remove = int(round(scheduled_to_remove))
+        if scheduled_to_remove >= args.remove_all_when_remove_beyond:
+            scheduled_to_remove = float('inf') # remove all
 
     print(f'Training for {args.train_steps} steps ({max_epochs} epochs)')
 
     all_cot_removed_in_prev_batch = False
     for epoch in range(0, max_epochs):
-        if scheduled_to_remove < float('inf'):
-            scheduled_to_remove = int(round(scheduled_to_remove))
-        if scheduled_to_remove >= args.remove_all_when_remove_beyond:
-            scheduled_to_remove = float('inf') # remove all
-        model.train()
 
+        model.train()
         for batch in train_dataloader:
 
             input_ids = batch['input_ids_all'] #.to(device)
             labels = batch['labels_all'] #.to(device)
             batch_size = input_ids.shape[0]
 
-            if args.remove_tokens:
+            if args.remove_tokens and step >= args.remove_from_step:
+
                 prev_scheduled_to_remove = scheduled_to_remove
-                if remove_step_counter == steps_per_removed_token or steps_per_removed_token == 0:
-                    scheduled_to_remove += 1
+                if remove_step_counter == steps_per_removed_token:
                     remove_step_counter = 0
+                    scheduled_to_remove += 1
                 if scheduled_to_remove > prev_scheduled_to_remove:
-                    print (f'Scheduled to remove: {scheduled_to_remove}')
-                    print(f" -epoch {epoch}. step {step}. removing: {scheduled_to_remove}")
+                    print (f'Step: {step}. Scheduled to remove: {scheduled_to_remove}.')
                     if args.reset_optimizer and (not all_cot_removed_in_prev_batch):
                         print ('RESETTING OPTIMIZER')
                         optimizer.zero_grad(set_to_none=True)
@@ -328,8 +331,6 @@ def main():
                         optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, **extra_args)
                 if scheduled_to_remove >= args.remove_all_when_remove_beyond:
                     scheduled_to_remove = float('inf') # remove all
-                elif scheduled_to_remove >= args.max_remove_length:
-                    scheduled_to_remove = args.max_remove_length
 
                 first_sep_positions = get_sep_position(input_ids, start_id)
                 second_sep_positions = get_sep_position(input_ids, ready_id)
