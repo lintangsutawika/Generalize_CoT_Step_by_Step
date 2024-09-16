@@ -129,10 +129,10 @@ def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, schedule
                 total_correct += 1
 
             if i == 0:
-                print (f'Input: {tokenizer.decode(input_ids_all_i[:sep_position], skip_special_tokens=True)}')
-                print (f'Target: {tgt_text}')
-                print (f'Predicted: {pred_text}')
-                print ('')
+                print (f'Input: {tokenizer.decode(input_ids_all_i[:sep_position], skip_special_tokens=True)}', flush=True)
+                print (f'Target: {tgt_text}', flush=True)
+                print (f'Predicted: {pred_text}', flush=True)
+                print ('', flush=True)
     accuracy = total_correct / total_instances
     # token_accuracy = total_correct_tokens / total_tokens
     # loss = total_loss / total_tokens
@@ -146,7 +146,7 @@ def main():
     parser.add_argument('--data_path', type=str, required=True)
     parser.add_argument('--data_name', type=str, default=None)
     parser.add_argument('--train_split', type=str, default="train")
-    parser.add_argument('--val_split', type=str, default="valid")
+    parser.add_argument('--valid_split', type=str, default="valid")
     parser.add_argument('--test_split', type=str, default=None)
     parser.add_argument('--epochs', type=int, default=1)
     parser.add_argument('--train_steps', type=int, default=1000)
@@ -184,10 +184,9 @@ def main():
     # Switch Tokens
     parser.add_argument('--switch_tokens', action='store_true')
     parser.add_argument('--switch_from_n_steps', type=float, default=5000)
-    parser.add_argument('--switch_from_n_tokens', type=float, default=1)
+    parser.add_argument('--switch_from_n_rate', type=float, default=0.0)
     parser.add_argument('--switch_every_n_step', type=float, default=5000)
     parser.add_argument('--switch_token_ratio', type=float, default=1.0)
-    parser.add_argument('--switch_from_rate', type=float, default=0.1)
     parser.add_argument('--switch_mode', type=str, choices=['depth', 'sequential'], default='sequential')
     args = parser.parse_args()
 
@@ -205,7 +204,7 @@ def main():
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     lambda_distribution = compute_lambda_distribution(args.removal_smoothing_lambda)
-    print (lambda_distribution.tolist()[:10])
+    print (lambda_distribution.tolist()[:10], flush=True)
 
     dtype = 'float32'
     if args.bf16:
@@ -213,20 +212,20 @@ def main():
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ctx = torch.amp.autocast(device_type='cuda', dtype=ptdtype)
-    print (ptdtype, dtype, device)
+    print (ptdtype, dtype, device, flush=True)
 
     # Create model
     if args.from_pretrained is None:
         config = ImplicitModelConfig(base_model=args.model)
         model = ImplicitModel(config).to(device).to(ptdtype)
     else:
-        print (f'Loading from {args.from_pretrained}')
+        print (f'Loading from {args.from_pretrained}', flush=True)
         model = ImplicitModel.from_pretrained(args.from_pretrained).to(device).to(ptdtype)
     if 'gpt2' in args.model:
         old_length = model.base_model.transformer.wpe.weight.shape[0]
         if args.truncation > old_length and args.from_pretrained is None:
             #import pdb; pdb.set_trace()
-            print ('EXPANDING POSITIONs')
+            print ('EXPANDING POSITIONs', flush=True)
             new_wpe = torch.nn.Embedding(args.truncation, model.base_model.transformer.wpe.weight.shape[-1])
             new_wpe.weight.data[:old_length] = model.base_model.transformer.wpe.weight
             new_wpe.weight.data[old_length:] = model.base_model.transformer.wpe.weight[-1].view(1, -1).expand(args.truncation-old_length, -1)
@@ -251,7 +250,7 @@ def main():
     ready_id = tokenizer.encode("<|ready|>")[0]
 
     if args.reinitialize_weights:
-        print ('reinitializing weights')
+        print ('reinitializing weights', flush=True)
         model.model.apply(model.model._init_weights)
 
     if args.keep_position:
@@ -259,16 +258,19 @@ def main():
 
     # Load data
     collate_fn = CoTDataCollator(tokenizer)
-    print("Building training dataset loader")
+    print("Building training dataset loader", flush=True)
     train_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, max_size=args.max_size, split=args.train_split)
+    print(f"Train set size: {len(train_dataset)}", flush=True)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=True)
-    print("Building validation dataset loader")
-    val_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, split=args.val_split)
+    print("Building validation dataset loader", flush=True)
+    val_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, split=args.valid_split)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=False)
+    print(f"Validation set size: {len(val_dataset)}", flush=True)
     if args.test_split:
-        print("Building test dataset loader")
+        print("Building test dataset loader", flush=True)
         test_dataset = CoTDataset(tokenizer, args.data_path, args.truncation, data_name=args.data_name, split=args.test_split)
         test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=False)
+        print(f"Test set size: {len(test_dataset)}", flush=True)
 
     # Create Optimizer
     trainable_params = list(model.parameters())
@@ -281,7 +283,7 @@ def main():
     position_ids = None
 
     steps_per_epoch = len(train_dataloader)
-    max_epochs = args.train_steps // steps_per_epoch
+    max_epochs = float(args.train_steps / steps_per_epoch)
     steps_per_removed_token = int(args.remove_every_n_step)
     steps_per_switched_token = int(args.switch_every_n_step)
     remove_step_counter = 0
@@ -289,14 +291,15 @@ def main():
     # switch_ratio = args.switch_ratio
     best_val_accuracy = float('-inf')
 
-    scheduled_to_switch = 0
+    scheduled_to_switch = 0.0
     if args.switch_tokens:
-        print (f'Switching {args.switch_from_n_tokens} CoT tokens starting from step {args.switch_from_n_steps}')
-        scheduled_to_switch = args.switch_from_n_tokens
+        print (f'Switching {args.switch_from_n_rate} CoT tokens starting from step {args.switch_from_n_steps}', flush=True)
+        scheduled_to_switch = args.switch_from_n_rate
+        ratio_increment = float(args.train_steps - args.switch_from_n_steps) / args.switch_every_n_step
 
     scheduled_to_remove = 0
     if args.remove_tokens:
-        print (f'Removing {args.remove_from_n_tokens} CoT tokens starting from step {args.remove_from_n_steps}')
+        print (f'Removing {args.remove_from_n_tokens} CoT tokens starting from step {args.remove_from_n_steps}', flush=True)
         scheduled_to_remove = args.remove_from_n_tokens
 
         if scheduled_to_remove < float('inf'):
@@ -304,7 +307,7 @@ def main():
         if scheduled_to_remove >= args.remove_all_when_remove_beyond:
             scheduled_to_remove = float('inf') # remove all
 
-    print(f'Training for {args.train_steps} steps ({max_epochs} epochs)')
+    print(f'Training for {args.train_steps} steps ({max_epochs} epochs)', flush=True)
 
     all_cot_removed_in_prev_batch = False
     for epoch in range(0, max_epochs):
@@ -316,16 +319,16 @@ def main():
             labels = batch['labels_all'] #.to(device)
             batch_size = input_ids.shape[0]
 
-            if args.remove_tokens and step >= args.remove_from_step:
+            if args.remove_tokens and step >= args.remove_from_n_steps:
 
                 prev_scheduled_to_remove = scheduled_to_remove
                 if remove_step_counter == steps_per_removed_token:
                     remove_step_counter = 0
                     scheduled_to_remove += 1
                 if scheduled_to_remove > prev_scheduled_to_remove:
-                    print (f'Step: {step}. Scheduled to remove: {scheduled_to_remove}.')
+                    print (f'Step: {step}. Scheduled to remove: {scheduled_to_remove}.', flush=True)
                     if args.reset_optimizer and (not all_cot_removed_in_prev_batch):
-                        print ('RESETTING OPTIMIZER')
+                        print ('RESETTING OPTIMIZER', flush=True)
                         optimizer.zero_grad(set_to_none=True)
                         del optimizer
                         optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, **extra_args)
@@ -371,91 +374,87 @@ def main():
 
                 all_cot_removed_in_prev_batch = all_cot_removed_in_batch
 
-            if epoch >= scheduled_to_switch and args.switch_tokens:
-                if switch_step_counter == steps_per_switched_token or steps_per_switched_token == 0:
-                    model.base_model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}_step_{step}_switch_rate_{switch_ratio}'), from_pt=True)
-                    model.tokenizer.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}_step_{step}_switch_rate_{switch_ratio}'))
-                    print(f" -epoch {epoch}. step {step}. switching rate: {switch_ratio}%")
-                    switch_ratio += 1.0
+            if args.switch_tokens and step >= args.switch_from_n_steps:
+                if switch_step_counter == steps_per_switched_token:
                     switch_step_counter = 0
+                    # model.base_model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}_step_{step}_switch_rate_{switch_ratio}'), from_pt=True)
+                    # model.tokenizer.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}_step_{step}_switch_rate_{switch_ratio}'))
+                    # print(f" -epoch {epoch}. step {step}. switching rate: {switch_ratio}%")
+                    scheduled_to_switch += ratio_increment
+                    print (f'Step: {step}. Scheduled to switch: {scheduled_to_switch} %.', flush=True)
                 else:
                     switch_step_counter += 1
 
-                # first_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
                 first_sep_positions = get_sep_position(input_ids, start_id)
-                # second_sep_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=1)
                 second_sep_positions = get_sep_position(input_ids, ready_id)
-                # eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=2)
                 eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
                 delta_sep_positions = second_sep_positions - first_sep_positions
                 
-                if switch_ratio > 0:
+                input_ids_tmp = []
+                labels_tmp = []
 
-                    input_ids_tmp = []
-                    labels_tmp = []
+                switch_prob = scheduled_to_switch/100.0
+                if switch_prob > 1.0:
+                    switch_prob = 1.0
+                for batch_id in range(input_ids.shape[0]):
+                    cot_length = int(delta_sep_positions[batch_id].cpu())
+                    filler_mask = np.random.choice([True, False], cot_length, p=[switch_prob, 1-switch_prob])
 
-                    switch_prob = switch_ratio/100.0
-                    if switch_prob > 1.0:
-                        switch_prob = 1.0
-                    for batch_id in range(input_ids.shape[0]):
-                        cot_length = int(delta_sep_positions[batch_id].cpu())
-                        filler_mask = np.random.choice([True, False], cot_length, p=[switch_prob, 1-switch_prob])
+                    if sum(filler_mask) == 0:
+                        input_ids_tmp.append(input_ids[batch_id])
+                        labels_tmp.append(labels[batch_id])
+                        continue
 
-                        if sum(filler_mask) == 0:
-                            input_ids_tmp.append(input_ids[batch_id])
-                            labels_tmp.append(labels[batch_id])
-                            continue
+                    # Find indices where the value changes from False to True
+                    start_indices = np.where(np.diff(filler_mask.astype(int)) == 1)[0] + 1
+                    # Find indices where the value changes from True to False
+                    end_indices = np.where(np.diff(filler_mask.astype(int)) == -1)[0] + 1
+                    # If the array starts with True, add index 0
+                    if filler_mask[0]:
+                        start_indices = np.insert(start_indices, 0, 0)
+                    # If the array ends with True, add the last index
+                    if filler_mask[-1]:
+                        end_indices = np.append(end_indices, len(filler_mask))
+                    # Pair start and end indices
+                    switch_index = np.column_stack((start_indices, end_indices))
+                    cot_tokens = input_ids[batch_id][first_sep_positions[batch_id]:second_sep_positions[batch_id]]
+                    cot_tokens_tmp = []
+                    for idx, (start, end) in enumerate(switch_index):
+                        if (idx == 0) and (start > 0):
+                            cot_tokens_tmp.append(cot_tokens[:start])
+                        seq_leng = end - start
+                        num_tokens = int(np.ceil(seq_leng/args.switch_token_replace))
+                        cot_tokens_tmp.append(torch.as_tensor([pause_id]*num_tokens)) #.to(device)
 
-                        # Find indices where the value changes from False to True
-                        start_indices = np.where(np.diff(filler_mask.astype(int)) == 1)[0] + 1
-                        # Find indices where the value changes from True to False
-                        end_indices = np.where(np.diff(filler_mask.astype(int)) == -1)[0] + 1
-                        # If the array starts with True, add index 0
-                        if filler_mask[0]:
-                            start_indices = np.insert(start_indices, 0, 0)
-                        # If the array ends with True, add the last index
-                        if filler_mask[-1]:
-                            end_indices = np.append(end_indices, len(filler_mask))
-                        # Pair start and end indices
-                        switch_index = np.column_stack((start_indices, end_indices))
-                        cot_tokens = input_ids[batch_id][first_sep_positions[batch_id]:second_sep_positions[batch_id]]
-                        cot_tokens_tmp = []
-                        for idx, (start, end) in enumerate(switch_index):
-                            if (idx == 0) and (start > 0):
-                                cot_tokens_tmp.append(cot_tokens[:start])
-                            seq_leng = end - start
-                            num_tokens = int(np.ceil(seq_leng/args.switch_token_replace))
-                            cot_tokens_tmp.append(torch.as_tensor([pause_id]*num_tokens)) #.to(device)
+                        if (idx == len(switch_index)-1) and (end < cot_length):
+                            cot_tokens_tmp.append(cot_tokens[end:])
+                    
+                    cot_tokens_tmp = torch.cat(cot_tokens_tmp)
+                    # if cot_tokens_tmp[-1] == pause_id:
+                    #     cot_tokens_tmp[-1] = ready_id
 
-                            if (idx == len(switch_index)-1) and (end < cot_length):
-                                cot_tokens_tmp.append(cot_tokens[end:])
-                        
-                        cot_tokens_tmp = torch.cat(cot_tokens_tmp)
-                        # if cot_tokens_tmp[-1] == pause_id:
-                        #     cot_tokens_tmp[-1] = ready_id
+                    input_ids_tmp.append(
+                        torch.cat((
+                            input_ids[batch_id][:first_sep_positions[batch_id]],
+                            cot_tokens_tmp,
+                            input_ids[batch_id][second_sep_positions[batch_id]:]
+                            ), dim=-1)
+                        )
 
-                        input_ids_tmp.append(
-                            torch.cat((
-                                input_ids[batch_id][:first_sep_positions[batch_id]],
-                                cot_tokens_tmp,
-                                input_ids[batch_id][second_sep_positions[batch_id]:]
-                                ), dim=-1)
-                            )
+                    labels_tmp.append(
+                        torch.cat((
+                            labels[batch_id][:first_sep_positions[batch_id]],
+                            cot_tokens_tmp,
+                            labels[batch_id][second_sep_positions[batch_id]:]
+                            ), dim=-1)
+                        )
+                    
+                    del cot_tokens_tmp
 
-                        labels_tmp.append(
-                            torch.cat((
-                                labels[batch_id][:first_sep_positions[batch_id]],
-                                cot_tokens_tmp,
-                                labels[batch_id][second_sep_positions[batch_id]:]
-                                ), dim=-1)
-                            )
-                        
-                        del cot_tokens_tmp
+                input_ids = batch_ids(input_ids_tmp, tokenizer.eos_token_id, device, input_ids.dtype)
+                labels = batch_ids(labels_tmp, -100, device, input_ids.dtype)
 
-                    input_ids = batch_ids(input_ids_tmp, tokenizer.eos_token_id, device, input_ids.dtype)
-                    labels = batch_ids(labels_tmp, -100, device, input_ids.dtype)
-
-                    del input_ids_tmp, labels_tmp
+                del input_ids_tmp, labels_tmp
 
             # if (not args.switch_tokens) and (not args.remove_tokens):
             input_ids = input_ids.to(device)
@@ -463,14 +462,14 @@ def main():
             
             # if not_printed == False:
             if step == 0:
-                print("Sample Input")
-                print(input_ids[0])
-                print("Sample Label")
-                print(labels[0])
+                print("Sample Input", flush=True)
+                print(input_ids[0], flush=True)
+                print("Sample Label", flush=True)
+                print(labels[0], flush=True)
                 not_printed = True
                 
             if args.max_len_train > 0 and input_ids.shape[-1] > args.max_len_train:
-                print ('skipped')
+                print ('skipped', flush=True)
                 continue
            
             with ctx:
@@ -487,7 +486,7 @@ def main():
             if step != 0 and step % 100 == 0:
                 token_accuracy = outputs.token_accuracy.item()
                 ppl = loss.exp().item()
-                print(f"Step: {step}. PPL: {ppl}. Token Accuracy: {token_accuracy}")
+                print(f"Step: {step}. PPL: {ppl}. Token Accuracy: {token_accuracy}", flush=True)
 
             if step != 0 and step % save_interval == 0:
                 #Save here
@@ -496,13 +495,13 @@ def main():
 
             if step != 0 and step % args.eval_interval == 0:
                 accuracy = evaluate(val_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
-                print (f'Step {step} - Evalation on Valid Split; Accuracy: {accuracy}.')
+                print (f'Step {step} - Evalation on Valid Split; Accuracy: {accuracy}.', flush=True)
                 if accuracy > best_val_accuracy:
-                    print (f'Obtained better val accuracy')
+                    print (f'Obtained better val accuracy', flush=True)
                     best_val_accuracy = accuracy
                     if args.test_split:
                         accuracy = evaluate(test_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
-                        print(f'Step {step} - Evalation on Test Split; Accuracy: {accuracy}.')
+                        print(f'Step {step} - Evalation on Test Split; Accuracy: {accuracy}.', flush=True)
 
             step += 1
 
