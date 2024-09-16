@@ -4,7 +4,6 @@ import copy
 import torch
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-from tqdm import tqdm
 from datasets import load_dataset
 
 def extract_answer(text):
@@ -57,7 +56,7 @@ class CoTDataset(Dataset):
         edited_sents_all = []
         #edited_sents_nocot = []
         self.examples_all = []
-        for src, tgt in tqdm(zip(src_lines, tgt_lines), total=len(src_lines)):
+        for src, tgt in zip(src_lines, tgt_lines):
             #import pdb; pdb.set_trace()
             ans = extract_answer(tgt)
             cot = extract_cot(tgt)
@@ -66,7 +65,7 @@ class CoTDataset(Dataset):
             #sent = ' {} {} '.format(src, eos_tok)
             #edited_sents_only.append(sent)
             # sent = ' {} {} '.format(src, eos_tok) + cot + ' {} '.format(eos_tok) + ans + ' {}'.format(eos_tok)
-            sent = f' {src} {start_tok} {cot} {ready_tok} {ans} {eos_tok}'
+            sent = f' {src} {eos_tok}{start_tok} {cot} {ready_tok} {ans} {eos_tok}'
             #edited_sents_all.append(sent)
             #sent = ' {} {} '.format(src, eos_tok) + ans + ' {}'.format(eos_tok)
             #edited_sents_nocot.append(sent)
@@ -78,7 +77,7 @@ class CoTDataset(Dataset):
             # if len(self.examples_all) % 1000 == 0:
             #     print (len(self.examples_all))
 
-        separator = tokenizer.eos_token_id #tokenizer(eos_tok, add_special_tokens=False)['input_ids'][0]
+        separator = tokenizer.eos_token_id
         self.separator = separator
 
     def __len__(self):
