@@ -51,9 +51,6 @@ class ImplicitModel(nn.Module):
 
     def generate(self, input_ids, max_new_tokens=512, num_beams=1, stop_on_two_eos=False, position_ids=None):
         sep_positions = get_sep_position(input_ids, self.tokenizer.eos_token_id)
-        # start_tok = "<|start|>"
-        # separator = tokenizer(start_tok, add_special_tokens=False)['input_ids'][0]
-        # sep_positions = get_sep_position(input_ids_all, separator) #tokenizer.eos_token_id)
         batch_size = input_ids.shape[0]
 
         # Since there's one eos after CoT and another after final answer, we need to wait for two eos
@@ -61,41 +58,16 @@ class ImplicitModel(nn.Module):
         if hasattr(generation_config, 'pad_token_id'):
             #generation_config.pad_token_id = -1 #TODO: this might not be necessary
             generation_config.pad_token_id = None #TODO: this might not be necessary
-        if stop_on_two_eos:
-            generation_config.eos_token_id = -1
-            logits_processor = LogitsProcessorList([DoubleEOSLogitsProcessor(self.tokenizer.eos_token_id)])
-            stopping_criteria = StoppingCriteriaList([DoubleEOSStoppingCriteria(self.tokenizer.eos_token_id)])
-        else:
-            logits_processor = None
-            stopping_criteria = None
 
         if sep_positions.eq(sep_positions[0]).all():
             input_ids = input_ids[:, :sep_positions[0]+1]
-            if position_ids is not None:
-                position_ids = position_ids[:, :sep_positions[0]+1]
-            if position_ids is not None:
-                beam_output = self.base_model.generate(
-                    input_ids=input_ids,
-                    position_ids=position_ids,
-                    generation_config=generation_config,
-                    max_new_tokens=max_new_tokens,
-                    num_beams=num_beams,
-                    early_stopping=True,
-                    num_return_sequences=1,
-                    logits_processor=logits_processor,
-                    stopping_criteria=stopping_criteria,
-                )
-            else:
-                beam_output = self.base_model.generate(
-                    input_ids=input_ids,
-                    generation_config=generation_config,
-                    max_new_tokens=max_new_tokens,
-                    num_beams=num_beams,
-                    early_stopping=True,
-                    num_return_sequences=1,
-                    logits_processor=logits_processor,
-                    stopping_criteria=stopping_criteria,
-                )
+            beam_output = self.base_model.generate(
+                input_ids=input_ids,
+                generation_config=generation_config,
+                max_new_tokens=max_new_tokens,
+                num_beams=num_beams,
+                num_return_sequences=1,
+            )
             beam_output = beam_output.unsqueeze(1)
         else:
             beam_output = []
@@ -103,33 +75,14 @@ class ImplicitModel(nn.Module):
                 input_ids_i = input_ids[i:i+1]
                 sep_positions_i = sep_positions[i:i+1]
                 input_ids_i = input_ids_i[:, :sep_positions_i+1]
-                if position_ids is not None:
-                    position_ids_i = position_ids[i:i+1, :sep_positions_i+1]
-                else:
-                    position_ids_i = None
-                if position_ids_i is not None:
-                    beam_output_i = self.base_model.generate(
-                        input_ids=input_ids_i,
-                        position_ids=position_ids_i,
-                        generation_config=generation_config,
-                        max_new_tokens=max_new_tokens,
-                        num_beams=num_beams,
-                        early_stopping=True,
-                        num_return_sequences=1,
-                        logits_processor=logits_processor,
-                        stopping_criteria=stopping_criteria,
-                    )
-                else:
-                    beam_output_i = self.base_model.generate(
-                        input_ids=input_ids_i,
-                        generation_config=generation_config,
-                        max_new_tokens=max_new_tokens,
-                        num_beams=num_beams,
-                        early_stopping=True,
-                        num_return_sequences=1,
-                        logits_processor=logits_processor,
-                        stopping_criteria=stopping_criteria,
-                    )
+
+                beam_output_i = self.base_model.generate(
+                    input_ids=input_ids_i,
+                    generation_config=generation_config,
+                    max_new_tokens=max_new_tokens,
+                    num_beams=num_beams,
+                    num_return_sequences=1,
+                )
                 beam_output.append(beam_output_i)
         return beam_output
 
