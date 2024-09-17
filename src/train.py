@@ -200,7 +200,9 @@ def main():
         args.remove_all_when_remove_beyond = int(args.remove_all_when_remove_beyond)
     with open(os.path.join(args.save_model, "train_args.json"), 'wt') as f:
         json.dump(vars(args), f, indent=4)
-    print("Run Info", flush=True)
+    print("########################################################", flush=True)
+    print("### Run Info", flush=True)
+    print("########################################################", flush=True)
     for arg in vars(args):
         print (arg, getattr(args, arg), flush=True)
 
@@ -251,6 +253,7 @@ def main():
     start_id = tokenizer.encode("<|start|>")[0]
     pause_id = tokenizer.encode("<|pause|>")[0]
     ready_id = tokenizer.encode("<|ready|>")[0]
+    eos_id = tokenizer.eos_token_id
 
     if args.reinitialize_weights:
         print ('reinitializing weights', flush=True)
@@ -338,7 +341,7 @@ def main():
 
                 first_sep_positions = get_sep_position(input_ids, start_id)
                 second_sep_positions = get_sep_position(input_ids, ready_id)
-                eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
+                eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id, skip=1)
 
                 all_cot_removed_in_batch = False
                 if scheduled_to_remove > 0 or args.removal_smoothing_lambda != float('inf'):
