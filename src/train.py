@@ -18,7 +18,7 @@ from model import ImplicitModel
 from configuration_model import ImplicitModelConfig
 from data import CoTDataset, CoTDataCollator, extract_answer
 from utils import get_sep_position, batch_ids, save_model
-
+from switching import switch_random
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -175,7 +175,7 @@ def main():
     parser.set_defaults(reinitialize_weights=False)
     # Remove Tokens
     parser.add_argument('--remove_tokens', action='store_true')
-    parser.add_argument('--remove_from_n_steps', type=float, default=5000)
+    parser.add_argument('--remove_from_n_steps', type=float, default=0)
     parser.add_argument('--remove_from_n_tokens', type=float, default=1)
     parser.add_argument('--remove_every_n_step', type=float, default=5000)
     parser.add_argument('--remove_all_when_remove_beyond', type=str, default='inf')
@@ -185,9 +185,8 @@ def main():
     parser.add_argument('--switch_tokens', action='store_true')
     parser.add_argument('--switch_from_n_steps', type=float, default=5000)
     parser.add_argument('--switch_from_n_rate', type=float, default=0.0)
-    parser.add_argument('--switch_every_n_step', type=float, default=5000)
     parser.add_argument('--switch_token_ratio', type=float, default=1.0)
-    parser.add_argument('--switch_mode', type=str, choices=['depth', 'sequential'], default='sequential')
+    parser.add_argument('--switch_mode', type=str, choices=['depth', 'sequential', 'random'], default='random')
     args = parser.parse_args()
 
     if args.save_interval is None:
@@ -201,6 +200,10 @@ def main():
         args.remove_all_when_remove_beyond = int(args.remove_all_when_remove_beyond)
     with open(os.path.join(args.save_model, "train_args.json"), 'wt') as f:
         json.dump(vars(args), f, indent=4)
+    print("Run Info", flush=True)
+    for arg in vars(args):
+        print (arg, getattr(args, arg), flush=True)
+
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     lambda_distribution = compute_lambda_distribution(args.removal_smoothing_lambda)
@@ -284,24 +287,22 @@ def main():
 
     steps_per_epoch = len(train_dataloader)
     max_epochs = float(args.train_steps / steps_per_epoch)
-    steps_per_removed_token = int(args.remove_every_n_step)
-    steps_per_switched_token = int(args.switch_every_n_step)
-    remove_step_counter = 0
-    switch_step_counter = 0
-    # switch_ratio = args.switch_ratio
     best_val_accuracy = float('-inf')
 
     scheduled_to_switch = 0.0
     if args.switch_tokens:
         print (f'Switching {args.switch_from_n_rate} CoT tokens starting from step {args.switch_from_n_steps}', flush=True)
+        switch_step_counter = 0
         scheduled_to_switch = args.switch_from_n_rate
-        ratio_increment = float(args.train_steps - args.switch_from_n_steps) / args.switch_every_n_step
+        ratio_increment = float(100.0 - scheduled_to_switch)/float(args.train_steps - args.switch_from_n_steps)
+        previous_scheduled_to_switch = 0
 
     scheduled_to_remove = 0
     if args.remove_tokens:
         print (f'Removing {args.remove_from_n_tokens} CoT tokens starting from step {args.remove_from_n_steps}', flush=True)
+        remove_step_counter = 0
+        steps_per_removed_token = int(args.remove_every_n_step)
         scheduled_to_remove = args.remove_from_n_tokens
-
         if scheduled_to_remove < float('inf'):
             scheduled_to_remove = int(round(scheduled_to_remove))
         if scheduled_to_remove >= args.remove_all_when_remove_beyond:
@@ -375,21 +376,12 @@ def main():
                 all_cot_removed_in_prev_batch = all_cot_removed_in_batch
 
             if args.switch_tokens and step >= args.switch_from_n_steps:
-                if switch_step_counter == steps_per_switched_token:
-                    switch_step_counter = 0
-                    # model.base_model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}_step_{step}_switch_rate_{switch_ratio}'), from_pt=True)
-                    # model.tokenizer.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}_step_{step}_switch_rate_{switch_ratio}'))
-                    # print(f" -epoch {epoch}. step {step}. switching rate: {switch_ratio}%")
-                    scheduled_to_switch += ratio_increment
-                    print (f'Step: {step}. Scheduled to switch: {scheduled_to_switch} %.', flush=True)
-                else:
-                    switch_step_counter += 1
 
-                first_sep_positions = get_sep_position(input_ids, start_id)
-                second_sep_positions = get_sep_position(input_ids, ready_id)
-                eos_positions = get_sep_position(input_ids, tokenizer.eos_token_id)
-                delta_sep_positions = second_sep_positions - first_sep_positions
-                
+                scheduled_to_switch += ratio_increment
+                if int(scheduled_to_switch) > previous_scheduled_to_switch:
+                    print (f'Step: {step}. Scheduled to switch: {scheduled_to_switch} %.', flush=True)
+                    previous_scheduled_to_switch = scheduled_to_switch
+
                 input_ids_tmp = []
                 labels_tmp = []
 
@@ -397,59 +389,19 @@ def main():
                 if switch_prob > 1.0:
                     switch_prob = 1.0
                 for batch_id in range(input_ids.shape[0]):
-                    cot_length = int(delta_sep_positions[batch_id].cpu())
-                    filler_mask = np.random.choice([True, False], cot_length, p=[switch_prob, 1-switch_prob])
-
-                    if sum(filler_mask) == 0:
-                        input_ids_tmp.append(input_ids[batch_id])
-                        labels_tmp.append(labels[batch_id])
-                        continue
-
-                    # Find indices where the value changes from False to True
-                    start_indices = np.where(np.diff(filler_mask.astype(int)) == 1)[0] + 1
-                    # Find indices where the value changes from True to False
-                    end_indices = np.where(np.diff(filler_mask.astype(int)) == -1)[0] + 1
-                    # If the array starts with True, add index 0
-                    if filler_mask[0]:
-                        start_indices = np.insert(start_indices, 0, 0)
-                    # If the array ends with True, add the last index
-                    if filler_mask[-1]:
-                        end_indices = np.append(end_indices, len(filler_mask))
-                    # Pair start and end indices
-                    switch_index = np.column_stack((start_indices, end_indices))
-                    cot_tokens = input_ids[batch_id][first_sep_positions[batch_id]:second_sep_positions[batch_id]]
-                    cot_tokens_tmp = []
-                    for idx, (start, end) in enumerate(switch_index):
-                        if (idx == 0) and (start > 0):
-                            cot_tokens_tmp.append(cot_tokens[:start])
-                        seq_leng = end - start
-                        num_tokens = int(np.ceil(seq_leng/args.switch_token_replace))
-                        cot_tokens_tmp.append(torch.as_tensor([pause_id]*num_tokens)) #.to(device)
-
-                        if (idx == len(switch_index)-1) and (end < cot_length):
-                            cot_tokens_tmp.append(cot_tokens[end:])
-                    
-                    cot_tokens_tmp = torch.cat(cot_tokens_tmp)
-                    # if cot_tokens_tmp[-1] == pause_id:
-                    #     cot_tokens_tmp[-1] = ready_id
-
-                    input_ids_tmp.append(
-                        torch.cat((
-                            input_ids[batch_id][:first_sep_positions[batch_id]],
-                            cot_tokens_tmp,
-                            input_ids[batch_id][second_sep_positions[batch_id]:]
-                            ), dim=-1)
+                    if args.switch_mode == "random":
+                        _input_ids, _labels = switch_random(
+                            input_ids[batch_id], labels[batch_id], 
+                            replace_ratio=args.switch_token_ratio,
+                            start_id=start_id,
+                            ready_id=ready_id,
+                            pause_id=pause_id,
+                            eos_id=eos_id,
+                            switch_prob=switch_prob
                         )
 
-                    labels_tmp.append(
-                        torch.cat((
-                            labels[batch_id][:first_sep_positions[batch_id]],
-                            cot_tokens_tmp,
-                            labels[batch_id][second_sep_positions[batch_id]:]
-                            ), dim=-1)
-                        )
-                    
-                    del cot_tokens_tmp
+                    input_ids_tmp.append(_input_ids)
+                    labels_tmp.append(_labels)
 
                 input_ids = batch_ids(input_ids_tmp, tokenizer.eos_token_id, device, input_ids.dtype)
                 labels = batch_ids(labels_tmp, -100, device, input_ids.dtype)
