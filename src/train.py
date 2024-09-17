@@ -156,7 +156,7 @@ def main():
     parser.add_argument('--truncation', type=int, default=-1)
     parser.add_argument('--max_remove_length', type=int, default=20)
     parser.add_argument('--max_len_train', type=int, default=-1)
-    parser.add_argument('--max_new_tokens', type=int, default=1024)
+    parser.add_argument('--max_new_tokens', type=int, default=800)
     parser.add_argument('--max_size', type=int, default=-1)
     parser.add_argument('--save_model', type=str, required=True)
     parser.add_argument('--from_pretrained', type=str, default=None)
@@ -244,11 +244,12 @@ def main():
                 ),
                 persistent=False,
             )
-    model = model.to(device).to(ptdtype)
     tokenizer = model.tokenizer
     tokenizer.add_tokens(["<|start|>", "<|pause|>", "<|ready|>"])
+    tokenizer.pad_token = tokenizer.eos_token
     model.tokenizer = tokenizer
     model.base_model.resize_token_embeddings(len(tokenizer)) 
+    model = model.to(device).to(ptdtype)
 
     start_id = tokenizer.encode("<|start|>")[0]
     pause_id = tokenizer.encode("<|pause|>")[0]
@@ -302,7 +303,7 @@ def main():
 
     scheduled_to_remove = 0
     if args.remove_tokens:
-        print (f'Removing {args.remove_from_n_tokens} CoT tokens starting from step {args.remove_from_n_steps}', flush=True)
+        print (f'Removing {args.remove_from_n_tokens} per {args.remove_every_n_step} steps CoT tokens starting from step {args.remove_from_n_steps}', flush=True)
         remove_step_counter = 0
         steps_per_removed_token = int(args.remove_every_n_step)
         scheduled_to_remove = args.remove_from_n_tokens
@@ -382,8 +383,9 @@ def main():
 
                 scheduled_to_switch += ratio_increment
                 if int(scheduled_to_switch) > previous_scheduled_to_switch:
-                    print (f'Step: {step}. Scheduled to switch: {scheduled_to_switch} %.', flush=True)
+                    print (f'Step: {step}. Scheduled to switch: {int(scheduled_to_switch)} %.', flush=True)
                     previous_scheduled_to_switch = scheduled_to_switch
+                    print_inputs = True
 
                 input_ids_tmp = []
                 labels_tmp = []
@@ -402,12 +404,29 @@ def main():
                             eos_id=eos_id,
                             switch_prob=switch_prob
                         )
+                    elif args.switch_mode == "sequential":
+                        _input_ids, _labels = switch_sequence(
+                            input_ids[batch_id], labels[batch_id], 
+                            replace_ratio=args.switch_token_ratio,
+                            start_id=start_id,
+                            ready_id=ready_id,
+                            pause_id=pause_id,
+                            eos_id=eos_id,
+                            switch_prob=switch_prob
+                        )
+                    elif args.switch_mode == "depth":
+                        pass
 
                     input_ids_tmp.append(_input_ids)
                     labels_tmp.append(_labels)
 
                 input_ids = batch_ids(input_ids_tmp, tokenizer.eos_token_id, device, input_ids.dtype)
                 labels = batch_ids(labels_tmp, -100, device, input_ids.dtype)
+
+                if print_inputs:
+                    print(input_ids[0])
+                    print(labels[0])
+                    print_inputs = False
 
                 del input_ids_tmp, labels_tmp
 
