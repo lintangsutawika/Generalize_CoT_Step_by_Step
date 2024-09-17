@@ -32,6 +32,15 @@ def get_sep_position(input_ids, sep_id, skip=0):
     return sep_positions
 
 
+def get_single_sep_position(input_ids, sep_id, skip=0):
+    mask = input_ids.eq(sep_id)
+    sep_position = mask.nonzero()[0, -1].item()
+    for _ in range(skip):
+        mask[sep_position] = False
+        sep_position = mask.nonzero()[0, -1].item()
+    return sep_position
+
+
 # Stop generation only after generating two EOSs, such as  z <eos> y <eos>
 class DoubleEOSStoppingCriteria(StoppingCriteria):
     def __init__(self, eos_token_id):
